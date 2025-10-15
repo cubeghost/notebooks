@@ -1,0 +1,277 @@
+<!doctype html>
+<notebook theme="air">
+  <title>three.js kaleidoscope playground
+  ⟳</title>
+  <script id="1" type="text/x-typescript">
+    const refresh = input(Inputs.button("⟳", {value: null, reduce: () => Date.now()}));
+
+    display(html`<h1 style="display: flex; width: 100%; max-width: unset; gap: 2rem;">
+      <span>three.js kaleidoscope playground</span>
+      ${refresh.element}
+    </h1>`);
+  </script>
+  <script id="11" type="text/x-typescript">
+    interface ShapesConfig {
+      count: number;
+      boundary: number;
+      size: {
+        min: number;
+        max: number;
+      },
+      types: ShapeType[],
+      wireframe: "none" | "some" | "all";
+    }
+
+    const count = input(Inputs.range([1, 64], {step: 1, label: "Count", value: 20}));
+    const boundary = input(Inputs.range([1, 64], {step: 1, label: "Boundary", value: 10}));
+    const size = input(interval([1, 16], {step: 1, label: "Size", value: [1, 3]}));
+    const types = input(Inputs.checkbox(Object.keys(SHAPE_MAP), {label: "Shape types", value: Object.keys(SHAPE_MAP)}));
+    const wireframe = input(Inputs.radio(["none", "some", "all"], {label: "Wireframe", value: "none"}));
+
+    interface KaleidoConfig {
+      sides: number;
+      angle: number;
+    }
+
+    const sides = input(Inputs.range([1, 24], {step: 1, label: "Sides", value: 6}));
+    const angle = input(Inputs.range([0, 180], {step: 1, label: "Angle", value: 45}));
+
+    interface RenderConfig {
+      background: string;
+      autoRotate: boolean;
+    }
+
+    const background = input(Inputs.color({label: "Background color", value: "#171720"}));
+    const autoRotate = input(Inputs.toggle({label: "Auto-rotate", value: false}));
+
+    display(html`<div style="display: flex">
+      <div>
+        <h4>Shapes</h4>
+        ${[count, boundary, size, types].map(i => i.element)}
+        <h5>Material</h5>
+        ${wireframe.element}
+      </div>
+      <div>
+        <h4>Kaleidoscope</h4>
+        ${[sides, angle].map(i => i.element)}
+        <br />
+        <h4>Rendering</h4>
+        ${[background, autoRotate].map(i => i.element)}
+      </div>
+    </div>`);
+  </script>
+  <script id="6" type="text/x-typescript">
+    display(container);
+    display(html`<small>Drag to rotate, scroll to zoom, shift-click to pan</small>`);
+  </script>
+  <script id="17" type="text/x-typescript">
+    interface Shape {
+      Geometry: typeof SHAPE_MAP[keyof SHAPE_MAP];
+      positon: [number, number, number];
+      rotation: [number, number, number];
+      args: number[];
+      wireframe: boolean;
+    }
+
+    function generateShapes(config: ShapeConfig): Shape[] {
+      const size = d3.randomInt(config.size[0], config.size[1]);
+      const positionScale = d3.randomInt(-config.boundary / 2, config.boundary / 2);
+      const rotationScale = d3.randomInt(0, Math.PI * 2);
+      const geometryScale = d3.scaleQuantize(config.types);
+      const wireframeScale = d3.scaleQuantize([true, false]);
+      const random = d3.randomUniform();
+
+      return Array.from({length: config.count}, () => {
+        const n = random();
+        const position = Array.from({length: 3}, positionScale);
+        const rotation = Array.from({length: 3}, rotationScale);
+        const Geometry = SHAPE_MAP[geometryScale(n)]
+        const wireframe = config.wireframe === "all" ? true :
+                          config.wireframe === "none" ? false :
+                          wireframeScale(n);
+
+        const args = (() => {
+          switch (Geometry) {
+            case THREE.BoxGeometry:
+              return [size(), size(), size()];
+            case THREE.CylinderGeometry:
+              const end = size();
+              return [end, end, size()];
+            case THREE.SphereGeometry: {
+              const diameter = size();
+              if (wireframe) {
+                // variation on segment count
+                const segments = d3.max([8, d3.min([diameter * 4, 20])]);
+                const v = d3.randomLogNormal(0, diameter / 3);
+                return [diameter, segments - v(), segments - v()];
+              } else {
+                return [diameter, 20, 20];
+              }
+            }
+            case THREE.TorusGeometry: {
+              const diameter = size();
+              const hole = d3.randomUniform(0.2, 0.8);
+              if (wireframe) {
+                // variation on segment count
+                const segments = d3.max([8, d3.min([diameter * 4, 20])]);
+                const v = d3.randomLogNormal(0, diameter / 3);
+                return [diameter, diameter * hole(), segments - v(), (segments - v()) * 4];
+              } else {
+                return [diameter, diameter * hole(), 20, 80];
+              }
+            }
+            case THREE.IcosahedronGeometry:
+            case THREE.TetrahedronGeometry:
+            case THREE.OctahedronGeometry:
+              return [size(), 0];
+            default:
+              return [];
+          }
+        })();
+
+        return {
+          Geometry,
+          position,
+          rotation,
+          args,
+          wireframe
+        };
+      });
+    };
+  </script>
+  <script id="13" type="text/x-typescript" pinned="">
+    refresh;
+
+    const shapes = generateShapes({count, boundary, size, types, wireframe});
+    const group = new THREE.Group();
+
+    const normalMaterial = new THREE.MeshNormalMaterial();
+    const wireframeMaterial = new THREE.MeshNormalMaterial({wireframe: true});
+
+    for (const shape of shapes) {
+      const geometry = new shape.Geometry(...shape.args);
+      const material = shape.wireframe ? wireframeMaterial : normalMaterial;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.fromArray(shape.position);
+      mesh.rotation.fromArray(shape.rotation);
+      group.add(mesh);
+    }
+
+    scene.add(group);
+
+    invalidation.then(() => group.clear());
+  </script>
+  <script id="9" type="text/x-typescript" pinned="">
+    const scene = new THREE.Scene();
+    invalidation.then(() => scene.clear());
+  </script>
+  <script id="27" type="text/x-typescript" pinned="">
+    scene.background = new THREE.Color(background);
+  </script>
+  <script id="8" type="text/x-typescript" pinned="">
+    const fov = 45;
+    const aspect = 1;
+    const near = 1;
+    const far = 1000;
+    const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+    camera.position.set(0, 0, 20)
+  </script>
+  <script id="4" type="text/x-typescript">
+    const cameraRenderer = new THREE.WebGLRenderer({canvas: cameraCanvas, preserveDrawingBuffer: true, antialias: true});
+    const kaleidoRenderer = new THREE.WebGLRenderer({canvas: kaleidoCanvas, preserveDrawingBuffer: true, antialias: true});
+
+    const renderers = [cameraRenderer, kaleidoRenderer];
+
+    const canvasSize = Math.floor(width / 2);
+    for (const renderer of renderers) {
+      renderer.setSize(canvasSize, canvasSize);
+      renderer.setPixelRatio(devicePixelRatio);
+    }
+
+    const controls = new OrbitControls(camera, controlElement);
+    controls.autoRotate = autoRotate;
+    controls.enableDamping = true;
+    controls.addEventListener("change", () => renderers.forEach(r => r.render(scene, camera)));
+
+    const composer = new EffectComposer(kaleidoRenderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+    const shaderPass = new ShaderPass(KaleidoShader);
+    shaderPass.uniforms['sides'].value = sides;
+    shaderPass.uniforms['angle'].value = angle * Math.PI / 180;
+    composer.addPass(shaderPass);
+    const outputPass = new OutputPass();
+    composer.addPass(outputPass);
+
+    const tick = (async function* () {
+      do {
+        yield null;
+        controls.update();
+        cameraRenderer.render(scene, camera);
+        composer.render();
+      } while (true);
+    })();
+
+    invalidation.then(() => {
+      controls.dispose();
+      renderers.forEach(r => r.dispose());
+    });
+  </script>
+  <script id="5" type="text/x-typescript" pinned="">
+    const container = html`
+    <div>
+      <div style="display: flex;" id="controls">
+        <canvas id="camera"></canvas>
+        <canvas id="kaleido" style="transform: translateX(-1px);"></canvas>
+      </div>
+    </div>`;
+    const controlElement = container.querySelector("#controls");
+    const cameraCanvas = container.querySelector("#camera");
+    const kaleidoCanvas = container.querySelector("#kaleido");
+  </script>
+  <script id="2" type="text/x-typescript" pinned="">
+    import * as THREE from "npm:three";
+    import { OrbitControls } from "npm:three/addons/controls/OrbitControls";
+    import { EffectComposer } from 'npm:three/addons/postprocessing/EffectComposer';
+    import { RenderPass } from 'npm:three/examples/jsm/postprocessing/RenderPass';
+    import { ShaderPass } from 'npm:three/examples/jsm/postprocessing/ShaderPass';
+    import { OutputPass } from 'npm:three/examples/jsm/postprocessing/OutputPass';
+    import { KaleidoShader } from 'npm:three/examples/jsm/shaders/KaleidoShader';
+  </script>
+  <script id="12" type="text/x-typescript" pinned="">
+    import { interval } from "observable:@mootari/range-slider";
+  </script>
+  <script id="3" type="text/x-typescript" pinned="">
+    import _ from "npm:lodash";
+
+    const SHAPE_MAP = {
+      Box: THREE.BoxGeometry,
+      Cylinder: THREE.CylinderGeometry,
+      Sphere: THREE.SphereGeometry,
+      Torus: THREE.TorusGeometry,
+      Icosahedron: THREE.IcosahedronGeometry,
+      Tetrahedron: THREE.TetrahedronGeometry,
+      Octahedron: THREE.OctahedronGeometry,
+    };
+
+    type ShapeType = keyof SHAPE_MAP;
+  </script>
+  <script id="18" type="text/markdown">
+    ### TODO
+    - [ ] “variation scale” option
+    - [ ] random distribution options
+  </script>
+  <script id="22" type="text/markdown">
+    ## Glossary
+  </script>
+  <script id="21" type="text/x-typescript" pinned="">
+    // https://github.com/observablehq/notebook-kit/discussions/32
+    function input(element) {
+      const generator = Generators.input(element);
+      generator.element = element;
+      return generator;
+    }
+
+    // cannot figure out how to make a generator out of Inputs.form
+  </script>
+</notebook>
