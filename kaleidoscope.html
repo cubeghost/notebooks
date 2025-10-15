@@ -1,14 +1,8 @@
 <!doctype html>
 <notebook theme="air">
-  <title>three.js kaleidoscope playground
-  ⟳</title>
-  <script id="1" type="text/x-typescript">
-    const refresh = input(Inputs.button("⟳", {value: null, reduce: () => Date.now()}));
-
-    display(html`<h1 style="display: flex; width: 100%; max-width: unset; gap: 2rem;">
-      <span>three.js kaleidoscope playground</span>
-      ${refresh.element}
-    </h1>`);
+  <title>three.js kaleidoscope playground</title>
+  <script id="1" type="text/markdown">
+    # three.js kaleidoscope playground
   </script>
   <script id="11" type="text/x-typescript">
     interface ShapesConfig {
@@ -263,6 +257,21 @@
   </script>
   <script id="22" type="text/markdown">
     ## Glossary
+  </script>
+  <script id="30" type="text/x-typescript" pinned="">
+    const refresh = input(Inputs.button("Refresh", {value: null, reduce: () => Date.now()}));
+
+    display(html`<div class="refresh-button">${refresh.element}</div>`);
+  </script>
+  <script id="31" type="text/html" pinned="">
+    <style>
+      .refresh-button {
+        position: absolute; top: 3rem; left: ${width}px; transform: translateX(-50%)
+      }
+      .refresh-button form {
+        width: unset !important;
+      }
+    </style>
   </script>
   <script id="21" type="text/x-typescript" pinned="">
     // https://github.com/observablehq/notebook-kit/discussions/32
