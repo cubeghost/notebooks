@@ -144,42 +144,30 @@
     }
   </script>
   <script id="13" type="text/x-typescript" pinned="">
-    function createShapeGroup(layer: number) {
-      const shapeGroup = new THREE.Group();
-      shapeGroup.name = "ShapeGroup";
-      shapeGroup.layers.enableAll()//.set(layer);
+    const shapeGroup = new THREE.Group();
+    shapeGroup.name = "ShapeGroup";
+    shapeGroup.layers.enableAll();
 
-      for (const shape of shapes) {
-        const geometry = new shape.geometry.Class(...shape.geometry.args);
-        const shapeMaterial = new MaterialClass(getMaterialArgs(shape));
-        const mesh = new THREE.Mesh(geometry, shapeMaterial);
-        mesh.position.fromArray(shape.position);
-        mesh.rotation.fromArray(shape.rotation);
-        mesh.layers.enableAll()//.set(layer);
-        shapeGroup.add(mesh);
-      }
-
-      const axesHelper = new THREE.AxesHelper(boundary);
-      axesHelper.layers.enableAll()//.set(layer);
-      shapeGroup.add(axesHelper);
-
-      return shapeGroup;
+    for (const shape of shapes) {
+      const geometry = new shape.geometry.Class(...shape.geometry.args);
+      const shapeMaterial = new MaterialClass(getMaterialArgs(shape));
+      const mesh = new THREE.Mesh(geometry, shapeMaterial);
+      mesh.position.fromArray(shape.position);
+      mesh.rotation.fromArray(shape.rotation);
+      mesh.layers.enableAll();
+      shapeGroup.add(mesh);
     }
 
-    const shapeGroup = createShapeGroup(PLAIN_LAYER);
+    // const axesHelper = new THREE.AxesHelper(boundary);
+    // axesHelper.layers.enableAll();
+    // shapeGroup.add(axesHelper);
+
     scene.add(shapeGroup);
-
-    const kaleidoShapeGroup = createShapeGroup(KALEIDO_LAYER);
-    // kaleidoShapeGroup.up.set(0, 0, 1);
-    scene.add(kaleidoShapeGroup);
-
     pathTracer.setScene(scene, kaleidoCamera);
 
     invalidation.then(() => {
       shapeGroup.removeFromParent();
       shapeGroup.clear();
-      kaleidoShapeGroup.removeFromParent();
-      kaleidoShapeGroup.clear();
     });
   </script>
   <script id="98" type="text/x-typescript" pinned="">
@@ -223,11 +211,12 @@
       mirrorGroup.add(panel);
     }
 
-    mirrorGroup.position.z = -1 * (length + boundary);
+    mirrorGroup.position.copy(kaleidoCamera.position);
+    mirrorGroup.quaternion.copy(kaleidoCamera.quaternion);
 
     scene.add(mirrorGroup);
-
     pathTracer.setScene(scene, kaleidoCamera);
+
     invalidation.then(() => {
       mirrorGroup.removeFromParent();
       mirrorGroup.clear();
@@ -295,6 +284,7 @@
     plainCamera.layers.set(PLAIN_LAYER);
     plainCamera.position.z = -1 * ((length * 2) + boundary);
     plainCamera.lookAt(new THREE.Vector3(0, 0, 0));
+    invalidation.then(() => plainCamera.removeFromParent());
   </script>
   <script id="8" type="text/x-typescript" pinned="">
     const kaleidoPerspective = [75, 1, 0.5, 500];
@@ -352,8 +342,8 @@
     pathTracer.bounces = bounces + 1;
     pathTracer.renderScale = Math.max(1 / devicePixelRatio, 0.5);
     pathTracer.tiles.setScalar(1);
-    // pathTracer.dynamicLowRes = true;
-    // pathTracer.lowResScale = 0.5;
+    pathTracer.dynamicLowRes = true;
+    pathTracer.lowResScale = 0.5;
     pathTracer.setBVHWorker(bvhWorker);
 
     pathTracer.setScene(scene, kaleidoCamera);
@@ -364,7 +354,7 @@
     });
   </script>
   <script id="148" type="text/x-typescript" pinned="">
-    const bvhWorker = new GenerateMeshBVHWorker()
+    const bvhWorker = new GenerateMeshBVHWorker();
   </script>
   <script id="133" type="text/markdown">
     <h4 id="rendering-setup--controls">Controls</h4>
@@ -376,53 +366,35 @@
 
     plainControls.update();
 
-    invalidation.then(() => {
-      plainControls.dispose();
-    });
+    invalidation.then(() => plainControls.dispose());
   </script>
   <script id="88" type="text/x-typescript" pinned="">
     const kaleidoControls = new OrbitControls(kaleidoCamera, kaleidoCanvas);
     kaleidoControls.enablePan = false;
     kaleidoControls.target.set(0, 0, 0);
 
-    const angleLimit = 3;
-
-    const currentAzimuth = kaleidoControls.getAzimuthalAngle();
-    kaleidoControls.maxAzimuthAngle = currentAzimuth + THREE.MathUtils.degToRad(angleLimit);
-    kaleidoControls.minAzimuthAngle = currentAzimuth - THREE.MathUtils.degToRad(angleLimit);
-    const currentPolar = kaleidoControls.getPolarAngle();
-    kaleidoControls.maxPolarAngle = currentPolar + THREE.MathUtils.degToRad(angleLimit);
-    kaleidoControls.minPolarAngle = currentPolar - THREE.MathUtils.degToRad(angleLimit);
-
     kaleidoControls.update();
 
-    invalidation.then(() => {
-      kaleidoControls.dispose();
-    });
+    invalidation.then(() => kaleidoControls.dispose());
   </script>
-  <script id="141" type="text/x-typescript" pinned="">
-    const kaleidoControlsChange = () => {
-      pathTracer.updateCamera();
-      resetSampleCount();
-    };
-    kaleidoControls.addEventListener("change", kaleidoControlsChange);
-    console.log(kaleidoControls)
+  <script id="149" type="text/x-typescript" pinned="">
+    const azimuthalDelta = Mutable(0);
+    const setAzimuthalDelta = (rad) => azimuthalDelta.value = rad;
 
-    invalidation.then(() => {
-      kaleidoControls.removeEventListener("change", kaleidoControlsChange);
-    });
+    const polarDelta = Mutable(0);
+    const setPolarDelta = (rad) => polarDelta.value = rad;
   </script>
   <script id="140" type="text/x-typescript" pinned="">
     function plainControlsChange() {
-      // const cameraWorldQuat = new THREE.Quaternion();
-      // plainCamera.getWorldQuaternion(cameraWorldQuat); .invert()
-      // console.log(plainControls._lastQuaternion, plainCamera.quaternion)
-      // const halfRot = new THREE.Quaternion();
-      // halfRot.setFromAxisAngle(new THREE.Vector3(0, -1, 0), Math.PI)
+      kaleidoControls.object.position.copy(plainControls.object.position);
+      kaleidoControls.object.setRotationFromQuaternion(plainControls.object.quaternion);
 
-      kaleidoShapeGroup.quaternion.copy(plainCamera.quaternion);
-      // kaleidoShapeGroup.quaternion.multiply(halfRot)
-      kaleidoShapeGroup.matrixWorldNeedsUpdate = true;
+      kaleidoControls._rotateLeft(azimuthalDelta);
+      kaleidoControls._rotateUp(polarDelta);
+      kaleidoControls.update();
+
+      mirrorGroup.position.copy(plainControls.object.position);
+      mirrorGroup.setRotationFromQuaternion(plainControls.object.quaternion);
 
       pathTracer.setScene(scene, kaleidoCamera);
       pathTracer.updateCamera();
@@ -430,8 +402,53 @@
     }
 
     plainControls.addEventListener("change", plainControlsChange);
+
     invalidation.then(() => {
       plainControls.removeEventListener("change", plainControlsChange);
+    });
+  </script>
+  <script id="151" type="text/x-typescript" pinned="">
+    const kaleidoAngleRange = THREE.MathUtils.degToRad(1);
+
+    function kaleidoControlsStart() {
+      const currentAzimuth = plainControls.getAzimuthalAngle();
+      const currentPolar = plainControls.getPolarAngle();
+      kaleidoControls.maxAzimuthAngle = currentAzimuth + kaleidoAngleRange;
+      kaleidoControls.minAzimuthAngle = currentAzimuth - kaleidoAngleRange;
+      kaleidoControls.maxPolarAngle = currentPolar + kaleidoAngleRange;
+      kaleidoControls.minPolarAngle = currentPolar - kaleidoAngleRange;
+      kaleidoControls.update();
+    }
+
+    function kaleidoControlsEnd() {
+      // defaults
+      kaleidoControls.maxAzimuthAngle = plainControls.maxAzimuthAngle;
+      kaleidoControls.minAzimuthAngle = plainControls.minAzimuthAngle;
+      kaleidoControls.maxPolarAngle = plainControls.maxPolarAngle;
+      kaleidoControls.minPolarAngle = plainControls.minPolarAngle;
+      kaleidoControls.update();
+    }
+
+    function kaleidoControlsChange(event) {
+      // only calculate delta when change originates from controls2
+      if (plainControls.state === -1) {
+        setAzimuthalDelta(plainControls.getAzimuthalAngle() - kaleidoControls.getAzimuthalAngle());
+        setPolarDelta(plainControls.getPolarAngle() - kaleidoControls.getPolarAngle());
+
+        pathTracer.setScene(scene, kaleidoCamera);
+        pathTracer.updateCamera();
+        resetSampleCount();
+      }
+    }
+
+    kaleidoControls.addEventListener("start", kaleidoControlsStart);
+    kaleidoControls.addEventListener("end", kaleidoControlsEnd);
+    kaleidoControls.addEventListener("change", kaleidoControlsChange);
+
+    invalidation.then(() => {
+      kaleidoControls.removeEventListener("start", kaleidoControlsStart);
+      kaleidoControls.removeEventListener("end", kaleidoControlsEnd);
+      kaleidoControls.removeEventListener("change", kaleidoControlsChange);
     });
   </script>
   <script id="5" type="text/x-typescript" pinned="">
@@ -883,31 +900,5 @@
     }
 
     // cannot figure out how to make a generator out of Inputs.form
-  </script>
-  <script id="94" type="text/x-typescript" pinned="">
-    // attempt at auto-rotate with TrackballControls (to get around polar limitation of OrbitControls)
-
-    // const controls = new TrackballControls(camera, controlElement);
-    // controls.rotateSpeed = 1.5;
-    // controls.screen.width = width / 2; // adjust rotation amount relative to width of each canvas
-
-    // let shapeAngle = 0;
-    // const shapeQuaternion = new THREE.Quaternion();
-
-    // if (autoRotate && controls.state === -1) {
-    //   // const deg = THREE.MathUtils.radToDeg(controls._lastAngle);
-    //   // const _angle = THREE.MathUtils.degToRad(deg + 0.05);
-    //   // quaternion.setFromAxisAngle(controls._lastAxis, _angle);
-    //   // controls.object.up.applyQuaternion(quaternion);
-    //   // controls._eye.applyQuaternion(quaternion);
-    //   // controls._lastAngle = _angle;
-    //   shapeAngle = (shapeAngle + 0.01) % (Math.PI * 2);
-    //   shapeQuaternion.setFromAxisAngle(controls._lastAxis, shapeAngle);
-    //   shapeGroup.rotation.setFromQuaternion(shapeQuaternion);
-    //   // shapeGroup.rotation.x = rotX;
-    //   // shapeGroup.rotation.y = rotY;
-    //   // rotX += 0.01;
-    //   // rotY += 0.01 / 2;
-    // }
   </script>
 </notebook>
