@@ -5,12 +5,36 @@
     # three.js kaleidoscope playground
     a realistic mirror-based kaleidoscope based on Leif Gehrmann’s [kaleidoscope-threejs-path-tracing](https://github.com/leifgehrmann/kaleidoscope-threejs-path-tracing)
 
+    <details>
+      <summary>Notes</summary>
+      ${md`
+      - Sometimes the path tracer output disappears, unclear why
+      - Sometimes with the fake Normal material the shapes are completely black, [maybe a floating point error?](https://github.com/gkjohnson/three-gpu-pathtracer/issues/429)
+      `}
+    </details>
+    <details>
+      <summary>TODO</summary>
+      ${md`
+      - Fix panning
+      - Add input debouncing
+      - Add option for Normal-material area light intensity
+      - Add option to hide/dismiss sample count
+      - Add download button
+      `}
+    </details>
+    <hr style="margin: 0">
+
     <div id="top" />
     ${nav("top")}
   </script>
   <script id="49" type="text/html">
     <div style="display: flex; max-width: 100%;" id="form">
-      <div>${shapesForm} ${materialForm}</div>
+      <div>
+        ${shapesForm}
+        ${materialForm}
+        <br>
+        ${refreshShapesButton}
+      </div>
       <div>
         ${kaleidoForm}
         <br />
@@ -32,7 +56,10 @@
   </script>
   <script id="89" type="text/markdown">
     ### Scene generation
-    ${nav("scene-generation")}
+  </script>
+  <script id="177" type="text/html">
+    <h4 id="scene-generation--shapes">Shapes</h4>
+    ${nav("scene-generation--shapes")}
   </script>
   <script id="17" type="text/x-typescript">
     interface Shape {
@@ -77,23 +104,36 @@
               const diameter = size();
               if (wireframe) {
                 // variation on segment count
-                const segments = d3.max([8, d3.min([diameter * 4, 20])]);
+                const segments = d3.max([8, d3.min([diameter * 4, 32])]);
                 const v = d3.randomLogNormal(0, diameter / 3);
                 return [diameter, segments - v(), segments - v()];
               } else {
-                return [diameter, 20, 20];
+                return [diameter, 32, 32];
               }
             }
             case THREE.TorusGeometry: {
               const diameter = size();
-              const hole = d3.randomUniform(0.2, 0.8);
+              const tube = d3.randomUniform(0.2, 0.8);
               if (wireframe) {
                 // variation on segment count
-                const segments = d3.max([8, d3.min([diameter * 4, 20])]);
+                const segments = d3.max([8, d3.min([diameter * 4, 32])]);
                 const v = d3.randomLogNormal(0, diameter / 3);
-                return [diameter, diameter * hole(), segments - v(), (segments - v()) * 4];
+                return [diameter, diameter * tube(), segments - v(), (segments - v()) * 4];
               } else {
-                return [diameter, diameter * hole(), 20, 80];
+                return [diameter, diameter * tube(), 32, 64];
+              }
+            }
+            case THREE.TorusKnotGeometry: {
+              // TODO other 2 args
+              const diameter = size();
+              const tube = d3.randomUniform(0.2, 0.5);
+              if (wireframe) {
+                // variation on segment count
+                const segments = d3.max([8, d3.min([diameter * 4, 32])]);
+                const v = d3.randomLogNormal(0, diameter / 3);
+                return [diameter, diameter * tube(), (segments - v()) * 4, segments - v()];
+              } else {
+                return [diameter, diameter * tube(), 128, 64];
               }
             }
             case THREE.IcosahedronGeometry:
@@ -122,26 +162,38 @@
     };
   </script>
   <script id="114" type="text/x-typescript" pinned="">
-    refresh;
+    void refreshShapes;
 
     const shapes = generateShapes({count, boundary, size, types, wireframe, color: materialColor});
+
+    display(shapes);
   </script>
   <script id="66" type="text/x-typescript" pinned="">
-    const MaterialClass = MATERIAL_MAP[material];
+    function getMaterial(shape: Shape) {
+      const {color} = shape;
 
-    function getMaterialArgs(shape: Shape) {
-      const {wireframe, color} = shape;
-      switch (material) {
-        case 'Phong':
-          return {wireframe, color, emissive: 0x000000, specular: background, shininess: 500};
-        case 'Lambert':
-          return {wireframe, color};
-        case 'Normal':
-          return {uniforms: {}, fragmentShader: normalFragmentShader, vertexShader};
+      switch (materialType) {
+        case "Phong":
+          return new THREE.MeshPhongMaterial({color, emissive: 0x000000, specular: background, shininess: 500});
+        case "Lambert":
+          return new THREE.MeshLambertMaterial({color});
+        case "Normal": {
+          return new THREE.MeshPhysicalMaterial({
+            color: 0xFFFFFF,
+            emissive: 0x000000,
+            reflectivity: 0,
+            roughness: 1,
+            metalness: 0,
+            vertexColors: true,
+          });
+        }
         default:
-          return {wireframe};
+          throw new Error(`Unimplmented material "${materialType}"`)
       }
     }
+  </script>
+  <script id="174" type="text/x-typescript" pinned="">
+    const useNormalColors = materialType === "Normal"
   </script>
   <script id="13" type="text/x-typescript" pinned="">
     const shapeGroup = new THREE.Group();
@@ -150,67 +202,140 @@
 
     for (const shape of shapes) {
       const geometry = new shape.geometry.Class(...shape.geometry.args);
-      const shapeMaterial = new MaterialClass(getMaterialArgs(shape));
-      const mesh = new THREE.Mesh(geometry, shapeMaterial);
+      if (useNormalColors) {
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute(new Array(geometry.getAttribute("normal").count * 3), 3));
+      }
+
+      const material = getMaterial(shape);
+      const mesh = new THREE.Mesh(geometry, material);
+
       mesh.position.fromArray(shape.position);
       mesh.rotation.fromArray(shape.rotation);
       mesh.layers.enableAll();
+
+      if (useNormalColors) {
+        material.castShadow = false;
+
+        setNormalColors(mesh, geometry);
+
+        material.onBeforeRender = function onBeforeRender(renderer, scene, camera, geometry, object, group) {
+          setNormalColors(object, geometry);
+        }
+      }
+
       shapeGroup.add(mesh);
     }
 
-    // const axesHelper = new THREE.AxesHelper(boundary);
-    // axesHelper.layers.enableAll();
-    // shapeGroup.add(axesHelper);
+    display(shapeGroup);
 
+    invalidation.then(() => {
+      shapeGroup.clear();
+    });
+  </script>
+  <script id="178" type="text/x-typescript" pinned="">
     scene.add(shapeGroup);
+
     pathTracer.setScene(scene, kaleidoCamera);
 
     invalidation.then(() => {
       shapeGroup.removeFromParent();
-      shapeGroup.clear();
+      resetRender();
     });
   </script>
-  <script id="98" type="text/x-typescript" pinned="">
-    // const lensMaterial = new THREE.MeshPhysicalMaterial({
-    //   map: targetTexture.texture,
-    //   transparent: true,
-    //   opacity: 1,
-    //   transmission: 0, // 1
-    //   roughness: 1,
-    //   metalness: 0,
-    // });
-    // const lensGeometry = new THREE.BoxGeometry(4, 0.01, 4);
-    // const lens = new THREE.Mesh(lensGeometry, lensMaterial);
-    // lens.rotateX(-Math.PI / 2);
-    // lens.rotateZ(-Math.PI);
+  <script id="162" type="text/x-typescript" pinned="">
+    function normalToColor(normal, object) {
+      // gl_FragColor = vec4( normalize( normal ) * 0.5 + 0.5, diffuseColor.a );
+      normal.applyMatrix3(object.normalMatrix).multiplyScalar(0.5).addScalar(0.5);
+      return normal;
+    }
 
-    // kaleidoScene.add(lens);
+    function setNormalColors(object, geometry) {
+      const colors = geometry.getAttribute("color");
+      const normals = geometry.getAttribute("normal");
 
-    // invalidation.then(() => {
-    //   lens.removeFromParent();
-    // });
+      for (let i = 0; i < colors.count; i++) {
+        const normal = new THREE.Vector3().fromBufferAttribute(normals, i);
+        const color = normalToColor(normal, object);
+        colors.setXYZ(i, color.x, color.y, color.z);
+      }
+
+      colors.needsUpdate = true;
+    }
+  </script>
+  <script id="175" type="text/x-typescript" pinned="">
+    function updateShapeNormalColors() {
+      if (useNormalColors) {
+        for (const shape of shapeGroup.children) {
+          setNormalColors(shape, shape.geometry);
+        }
+      }
+    }
+  </script>
+  <script id="176" type="text/html">
+    <h4 id="scene-generation--mirrors">Mirrors</h4>
+    ${nav("scene-generation--mirrors")}
   </script>
   <script id="97" type="text/x-typescript" pinned="">
     const mirrorGroup = new THREE.Group();
     mirrorGroup.name = "MirrorGroup";
     mirrorGroup.layers.set(KALEIDO_LAYER);
 
-    for (let i = 0; i < sides; i++) {
-      const panel = new THREE.Mesh(
-        new THREE.BoxGeometry(boundary, 0.02, length),
+    const innerMirrorGroup = new THREE.Group();
+    innerMirrorGroup.name = "InnerMirrorGroup";
+    innerMirrorGroup.layers.set(KALEIDO_LAYER);
+
+    if (useCylinderMirror) {
+      const cylinder = new THREE.Mesh(
+        new THREE.CylinderGeometry(1, 1, length, sides, 1, true),
         new THREE.MeshStandardMaterial({
           color: 0xFFFFFF,
           roughness,
           metalness,
+          side: THREE.BackSide,
         })
       );
-      panel.translateY(Math.cos(i / sides * Math.PI * 2));
-      panel.translateX(Math.sin(i / sides * Math.PI * 2));
-      panel.translateZ(-length / 2);
-      panel.rotateZ((-i) / sides * Math.PI * 2);
-      mirrorGroup.add(panel);
+
+      cylinder.translateZ(-length / 2);
+      cylinder.rotation.set(0, Math.PI / 2, Math.PI / 2);
+
+      cylinder.layers.set(KALEIDO_LAYER);
+      innerMirrorGroup.add(cylinder);
+    } else {
+      const mirrorApothem = 1;
+      const mirrorRadius = mirrorApothem / Math.cos(Math.PI / sides);
+      const mirrorSide = 2 * mirrorRadius * Math.sin(Math.PI / sides);
+
+      for (let i = 0; i < sides; i++) {
+        const panel = new THREE.Mesh(
+          new THREE.BoxGeometry(mirrorSide, 0.02, length),
+          new THREE.MeshStandardMaterial({
+            color: 0xFFFFFF,
+            roughness,
+            metalness,
+          })
+        );
+        panel.castShadow = false;
+
+        panel.translateY(Math.cos((i / sides) * (Math.PI * 2)) * mirrorApothem);
+        panel.translateX(Math.sin((i / sides) * (Math.PI * 2)) * mirrorApothem);
+        panel.translateZ(-length / 2);
+
+        panel.rotateZ((-i) / sides * (Math.PI * 2));
+
+        panel.layers.set(KALEIDO_LAYER);
+        innerMirrorGroup.add(panel);
+      }
     }
 
+    mirrorGroup.add(innerMirrorGroup);
+
+    display(mirrorGroup);
+
+    invalidation.then(() => {
+      mirrorGroup.clear();
+    });
+  </script>
+  <script id="181" type="text/x-typescript" pinned="">
     mirrorGroup.position.copy(kaleidoCamera.position);
     mirrorGroup.quaternion.copy(kaleidoCamera.quaternion);
 
@@ -219,14 +344,28 @@
 
     invalidation.then(() => {
       mirrorGroup.removeFromParent();
-      mirrorGroup.clear();
-      resetSampleCount();
+      resetRender();
     });
+  </script>
+  <script id="180" type="text/x-typescript" pinned="">
+    innerMirrorGroup.rotation.z = THREE.MathUtils.degToRad(rotation);
+
+    pathTracer.setScene(scene, kaleidoCamera);
+
+    invalidation.then(() => {
+      resetRender();
+    });
+  </script>
+  <script id="165" type="text/html">
+    <h4 id="scene-generation--lights">Lights</h4>
+    ${nav("scene-generation--lights")}
   </script>
   <script id="126" type="text/x-typescript" pinned="">
     const hemisphereLight = new THREE.HemisphereLight(0xFFFFFF, background, 5);
     hemisphereLight.layers.enableAll();
-    scene.add(hemisphereLight);
+    if (!useNormalColors) scene.add(hemisphereLight);
+
+    pathTracer.updateLights();
 
     invalidation.then(() => {
       hemisphereLight.removeFromParent();
@@ -237,7 +376,9 @@
     const plainDirectionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.75);
     plainDirectionalLight.position.set(0, 0, 20);
     plainDirectionalLight.layers.set(PLAIN_LAYER);
-    plainCamera.add(plainDirectionalLight);
+    if (!useNormalColors) plainCamera.add(plainDirectionalLight);
+
+    pathTracer.updateLights();
 
     invalidation.then(() => {
       plainDirectionalLight.removeFromParent();
@@ -248,11 +389,74 @@
     const kaleidoDirectionalLight = new THREE.DirectionalLight(0xFFFFFF, 0.75);
     kaleidoDirectionalLight.position.set(0, 0, 20);
     kaleidoDirectionalLight.layers.set(KALEIDO_LAYER);
-    kaleidoCamera.add(kaleidoDirectionalLight);
+    if (!useNormalColors) kaleidoCamera.add(kaleidoDirectionalLight);
+
+    pathTracer.updateLights();
 
     invalidation.then(() => {
       kaleidoDirectionalLight.removeFromParent();
       kaleidoDirectionalLight.dispose();
+    });
+  </script>
+  <script id="152" type="text/x-typescript" pinned="">
+    // lights Normal-colored shapes with the inverse of the environment color
+
+    RectAreaLightUniformsLib.init();
+
+    const areaLightGroup = new THREE.Group();
+    areaLightGroup.name = "AreaLightCameraGroup";
+    areaLightGroup.layers.enableAll();
+
+    areaLightGroup.position.copy(kaleidoCamera.position);
+    areaLightGroup.quaternion.copy(kaleidoCamera.quaternion);
+
+    const backgroundColor = new THREE.Color(background);
+    const inverseColor = new THREE.Color(1 - backgroundColor.r, 1 - backgroundColor.g, 1 - backgroundColor.b);
+
+    const areaLightSize = boundary * 1.5;
+    // TODO add experimental option for intensity
+    const areaLightArgs = [inverseColor, 2.5, areaLightSize, areaLightSize];
+    const areaLightAngle = THREE.MathUtils.degToRad(30);
+
+    const centerAreaLight = new THREE.RectAreaLight(...areaLightArgs);
+    centerAreaLight.position.set(0, 0, 1);
+
+    const topAreaLight = new THREE.RectAreaLight(...areaLightArgs);
+    const rightAreaLight = new THREE.RectAreaLight(...areaLightArgs);
+    const bottomAreaLight = new THREE.RectAreaLight(...areaLightArgs);
+    const leftAreaLight = new THREE.RectAreaLight(...areaLightArgs);
+
+    topAreaLight.position.set(0, areaLightSize, 1);
+    topAreaLight.rotation.set(-areaLightAngle, 0, 0);
+
+    rightAreaLight.position.set(-areaLightSize, 0, 1);
+    rightAreaLight.rotation.set(0, -areaLightAngle, 0);
+
+    bottomAreaLight.position.set(0, -areaLightSize, 1);
+    bottomAreaLight.rotation.set(areaLightAngle, 0, 0);
+
+    leftAreaLight.position.set(areaLightSize, 0, 1);
+    leftAreaLight.rotation.set(0, areaLightAngle, 0);
+
+    for (const areaLight of [centerAreaLight, topAreaLight, rightAreaLight, bottomAreaLight, leftAreaLight]) {
+      areaLight.layers.enableAll();
+      areaLightGroup.add(areaLight);
+    }
+
+    if (useNormalColors) {
+      scene.add(areaLightGroup);
+    }
+
+    pathTracer.updateLights();
+
+    invalidation.then(() => {
+      areaLightGroup.removeFromParent();
+      areaLightGroup.clear();
+
+      // centerAreaLight.dispose();
+      for (const areaLight of [centerAreaLight, topAreaLight, rightAreaLight, bottomAreaLight, leftAreaLight]) {
+        areaLight.dispose();
+      }
     });
   </script>
   <script id="90" type="text/markdown">
@@ -260,18 +464,33 @@
 
     ${nav("rendering-setup")}
   </script>
-  <script id="104" type="text/x-typescript">
+  <script id="104" type="text/x-typescript" pinned="">
     const scene = new THREE.Scene();
     scene.layers.enableAll();
 
+    display(scene);
+
+    invalidation.then(() => {
+      scene.clear();
+    });
+  </script>
+  <script id="156" type="text/x-typescript" pinned="">
+    const backgroundColor = new THREE.Color(background);
+
     const kaleidoEnvironment = new GradientEquirectTexture();
-    kaleidoEnvironment.bottomColor.set(0xFFFFFF);
-    kaleidoEnvironment.bottomColor.set(background);
+    kaleidoEnvironment.topColor.set(backgroundColor.clone().offsetHSL(0, 0, 0.25));
+    kaleidoEnvironment.bottomColor.set(backgroundColor);
     kaleidoEnvironment.update();
+
     scene.environment = kaleidoEnvironment;
     scene.background = kaleidoEnvironment;
 
-    invalidation.then(() => scene.clear());
+    pathTracer.updateEnvironment();
+
+    invalidation.then(() => {
+      kaleidoEnvironment.dispose();
+      resetRender();
+    });
   </script>
   <script id="136" type="text/markdown">
     <h4 id="rendering-setup--cameras">Cameras</h4>
@@ -284,17 +503,25 @@
     plainCamera.layers.set(PLAIN_LAYER);
     plainCamera.position.z = -1 * ((length * 2) + boundary);
     plainCamera.lookAt(new THREE.Vector3(0, 0, 0));
+
+    scene.add(plainCamera);
+
+    display(plainCamera);
+
     invalidation.then(() => plainCamera.removeFromParent());
   </script>
   <script id="8" type="text/x-typescript" pinned="">
     const kaleidoPerspective = [75, 1, 0.5, 500];
     const kaleidoCamera = new THREE.PerspectiveCamera(...kaleidoPerspective);
     kaleidoCamera.name = "KaleidoCamera";
-    kaleidoCamera.layers.enable(KALEIDO_LAYER);
+    kaleidoCamera.layers.enableAll();
     kaleidoCamera.position.z = -1 * ((length * 2) + boundary);
     kaleidoCamera.lookAt(new THREE.Vector3(0, 0, 0));
 
     scene.add(kaleidoCamera);
+
+    display(kaleidoCamera);
+
     invalidation.then(() => kaleidoCamera.removeFromParent());
   </script>
   <script id="135" type="text/markdown">
@@ -316,14 +543,17 @@
 
     plainRenderer.toneMapping = THREE.LinearToneMapping;
     plainRenderer.outputEncoding = THREE.sRGBEncoding;
+    plainRenderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+
+    display(plainRenderer);
 
     invalidation.then(() => plainRenderer.dispose());
   </script>
-  <script id="4" type="text/x-typescript">
+  <script id="4" type="text/x-typescript" pinned="">
     const kaleidoRenderer = new THREE.WebGLRenderer({
       canvas: kaleidoCanvas,
       antialias: true,
-      preserveDrawingBuffer: true
+      preserveDrawingBuffer: true,
     });
 
     kaleidoRenderer.setSize(canvasSize, canvasSize);
@@ -331,22 +561,25 @@
 
     kaleidoRenderer.toneMapping = THREE.LinearToneMapping;
     kaleidoRenderer.outputEncoding = THREE.sRGBEncoding;
+    kaleidoRenderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+
+    display(kaleidoRenderer);
 
     invalidation.then(() => kaleidoRenderer.dispose());
   </script>
   <script id="103" type="text/x-typescript" pinned="">
-    refresh;
-
     const pathTracer = new WebGLPathTracer(kaleidoRenderer);
 
     pathTracer.bounces = bounces + 1;
     pathTracer.renderScale = Math.max(1 / devicePixelRatio, 0.5);
     pathTracer.tiles.setScalar(1);
-    pathTracer.dynamicLowRes = true;
+    pathTracer.dynamicLowRes = dynamicLowRes;
     pathTracer.lowResScale = 0.5;
     pathTracer.setBVHWorker(bvhWorker);
 
     pathTracer.setScene(scene, kaleidoCamera);
+
+    display(pathTracer);
 
     invalidation.then(() => {
       pathTracer.dispose();
@@ -362,9 +595,12 @@
   </script>
   <script id="124" type="text/x-typescript" pinned="">
     const plainControls = new OrbitControls(plainCamera, plainCanvas);
+    kaleidoControls.enablePan = false;
     plainControls.target.set(0, 0, 0);
 
     plainControls.update();
+
+    display(plainControls);
 
     invalidation.then(() => plainControls.dispose());
   </script>
@@ -375,17 +611,33 @@
 
     kaleidoControls.update();
 
+    display(kaleidoControls);
+
     invalidation.then(() => kaleidoControls.dispose());
   </script>
+  <script id="168" type="text/x-typescript" pinned="">
+    void resetCameras;
+
+    invalidation.then(() => {
+      plainControls.reset();
+      kaleidoControls.reset();
+    });
+  </script>
   <script id="149" type="text/x-typescript" pinned="">
+    // TODO also figure out panning
+
     const azimuthalDelta = Mutable(0);
     const setAzimuthalDelta = (rad) => azimuthalDelta.value = rad;
 
     const polarDelta = Mutable(0);
     const setPolarDelta = (rad) => polarDelta.value = rad;
   </script>
+  <script id="184" type="text/x-typescript" pinned="">
+    display({azimuthalDelta, polarDelta})
+  </script>
   <script id="140" type="text/x-typescript" pinned="">
     function plainControlsChange() {
+      console.log("plainControlsChange")
       kaleidoControls.object.position.copy(plainControls.object.position);
       kaleidoControls.object.setRotationFromQuaternion(plainControls.object.quaternion);
 
@@ -395,10 +647,12 @@
 
       mirrorGroup.position.copy(plainControls.object.position);
       mirrorGroup.setRotationFromQuaternion(plainControls.object.quaternion);
+      areaLightGroup.position.copy(plainControls.object.position);
+      areaLightGroup.setRotationFromQuaternion(plainControls.object.quaternion);
 
       pathTracer.setScene(scene, kaleidoCamera);
       pathTracer.updateCamera();
-      resetSampleCount();
+      resetRender();
     }
 
     plainControls.addEventListener("change", plainControlsChange);
@@ -437,12 +691,14 @@
 
         pathTracer.setScene(scene, kaleidoCamera);
         pathTracer.updateCamera();
-        resetSampleCount();
+        resetRender();
       }
     }
 
-    kaleidoControls.addEventListener("start", kaleidoControlsStart);
-    kaleidoControls.addEventListener("end", kaleidoControlsEnd);
+    if (lockKaleidoAngle) {
+      kaleidoControls.addEventListener("start", kaleidoControlsStart);
+      kaleidoControls.addEventListener("end", kaleidoControlsEnd);
+    }
     kaleidoControls.addEventListener("change", kaleidoControlsChange);
 
     invalidation.then(() => {
@@ -479,12 +735,12 @@
           if (sampleCount <= samples) {
             try {
               pathTracer.renderSample();
+              renderSampleCount(sampleCount, samples);
+              incrementSampleCount();
             } catch (e) {
-              console.log(e);
+              console.log("renderSample error", e);
               throw e;
             }
-            renderSampleCount(sampleCount, samples);
-            incrementSampleCount();
           }
         }
 
@@ -492,8 +748,8 @@
     })();
   </script>
   <script id="105" type="text/x-typescript" pinned="">
-    samples;
-    enablePathTracing;
+    void samples;
+    void enablePathTracing;
 
     const sampleCount = Mutable(0);
 
@@ -505,25 +761,12 @@
 
     invalidation.then(() => resetSampleCount());
   </script>
-  <script id="125" type="text/x-typescript" pinned="">
-    const vertexShader = `
-      varying vec3 vNormal;
+  <script id="183" type="text/x-typescript" pinned="">
+    function resetRender() {
+      resetSampleCount();
+      pathTracer.reset();
+    }
 
-      void main() {
-        vNormal = normal;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `;
-    const normalFragmentShader = `
-      varying vec3 vNormal;
-
-      void main(void)
-      {
-          vec3 view_nv  = normalize(vNormal);
-          vec3 nv_color = view_nv * 0.5 + 0.5;
-          gl_FragColor  = vec4(nv_color, 1.0);
-      }
-    `;
   </script>
   <script id="130" type="text/x-typescript" pinned="">
     const PLAIN_LAYER = 3;
@@ -535,6 +778,7 @@
       Cylinder: THREE.CylinderGeometry,
       Sphere: THREE.SphereGeometry,
       Torus: THREE.TorusGeometry,
+      TorusKnot: THREE.TorusKnotGeometry,
       Icosahedron: THREE.IcosahedronGeometry,
       Tetrahedron: THREE.TetrahedronGeometry,
       Octahedron: THREE.OctahedronGeometry,
@@ -578,7 +822,7 @@
     const count = input(Inputs.range([1, 64], {step: 1, label: "Count", value: 20}));
     const boundary = input(Inputs.range([1, 64], {step: 1, label: "Boundary", value: 10}));
     const size = input(interval([1, 16], {step: 1, label: "Size", value: [1, 3]}));
-    const types = input(Inputs.checkbox(Object.keys(SHAPE_MAP), {label: "Shape types", value: Object.keys(SHAPE_MAP)}));
+    const types = input(Inputs.checkbox(Object.keys(SHAPE_MAP), {label: "Shape types", value: Object.keys(SHAPE_MAP).filter(v => v !== "TorusKnot")}));
 
     const shapesForm = [
       html`<h4>Shapes`,
@@ -588,18 +832,18 @@
   <script id="69" type="text/x-typescript" pinned="">
     interface MaterialConfig {
       wireframe: "none" | "some" | "all";
-      material: MaterialType;
+      materialType: MaterialType;
       materialColor: ColorScheme;
     }
 
     const wireframe = input(Inputs.radio(["none", "some", "all"], {label: "Wireframe", value: "none"}));
-    const material = input(Inputs.select(Object.keys(MATERIAL_MAP), {label: "Material", value: "Lambert"}));
+    const materialType = input(Inputs.select(Object.keys(MATERIAL_MAP), {label: "Material", value: "Normal"}));
     const materialColor = input(Inputs.select(schemeKeys, {label: "Color", value: "schemeSpectral"}));
 
     const materialForm = [
       html`<h4>Material`,
       wireframe.element,
-      material.element,
+      materialType.element,
       materialColor.element
     ]
   </script>
@@ -612,13 +856,14 @@
     }
 
     const sides = input(Inputs.range([3, 4], {step: 1, label: "Number (sides)", value: 3}));
-    const length = input(Inputs.range([1, 50], {step: 1, label: "Length", value: 5}));
+    const length = input(Inputs.range([1, 50], {step: 1, label: "Length", value: 6}));
     const roughness = input(Inputs.range([0, 1], {step: 0.01, label: "Roughness", value: 0.03}));
     const metalness = input(Inputs.range([0, 1], {step: 0.01, label: "Metalness", value: 1}));
+    const rotation = input(Inputs.range([0, 180], {step: 1, label: "Rotation (deg)", value: 0}))
 
     const kaleidoForm = [
         html`<h4>Mirrors`,
-        ...[sides, length, roughness, metalness].map(i => i.element),
+        ...[sides, length, roughness, metalness, rotation].map(i => i.element),
     ];
   </script>
   <script id="57" type="text/x-typescript">
@@ -630,17 +875,22 @@
     }
 
     const enablePathTracing = input(Inputs.toggle({label: "Enable path tracing", value: false}));
-    const bounces = input(Inputs.range([1, 60], {step: 1, label: "Light bounces", value: 10}));
-    const samples = input(Inputs.range([1, 1000], {step: 1, label: "Render samples", value: 200}));
+    const dynamicLowRes = input(Inputs.toggle({label: "Dynamic low resolution", value: true}))
+    const bounces = input(Inputs.range([1, 60], {step: 1, label: "Light bounces", value: 6}));
+    const samples = input(Inputs.range([1, 1000], {step: 1, label: "Render samples", value: 100}));
     const background = input(Inputs.color({label: "Background color", value: "#EEEEEE"})); // #171720
 
     const renderingForm = [
         html`<h4>Rendering`,
-      ...[enablePathTracing, bounces, samples, background].map(i => i.element)
+      ...[enablePathTracing, dynamicLowRes, bounces, samples, background].map(i => i.element)
     ];
   </script>
+  <script id="179" type="text/x-typescript" pinned="">
+    const refreshShapes = input(Inputs.button("Generate shapes", {value: null, reduce: () => Date.now()}));
+    const refreshShapesButton = refreshShapes.element;
+  </script>
   <script id="51" type="text/x-typescript" hidden="">
-    const useShapeDistribution = input(Inputs.toggle({label: "Control shape distribution?", value: true}));
+    const useShapeDistribution = input(Inputs.toggle({label: "Control shape distribution", value: true}));
     const useShapeDistributionToggle = useShapeDistribution.element;
   </script>
   <script id="42" type="text/x-typescript">
@@ -664,7 +914,16 @@
     const advancedForm = details({label: "Advanced"});
   </script>
   <script id="85" type="text/x-typescript" pinned="">
+    const resetCameras = input(Inputs.button("Reset cameras", {value: null, reduce: () => Date.now()}));
+    const lockKaleidoAngle = input(Inputs.toggle({label: "Lock kaleidoscope angle", value: true}));
+    const useCylinderMirror = input(Inputs.toggle({label: "Use cylinder-based mirror", value: false}))
+
     advancedForm.contents = html.fragment`
+      ${resetCameras.element}
+      ${lockKaleidoAngle.element}
+      <hr style="padding: 0.25rem 0; margin: 0;">
+      ${useCylinderMirror.element}
+      <hr style="padding: 0.25rem 0; margin: 0;">
       ${useShapeDistributionToggle}
       ${shapeDistributionInput}
     `;
@@ -684,6 +943,12 @@
     import { ShaderPass } from "npm:three@0.170.0/examples/jsm/postprocessing/ShaderPass";
     import { OutputPass } from "npm:three@0.170.0/examples/jsm/postprocessing/OutputPass";
     import { KaleidoShader } from "npm:three@0.170.0/examples/jsm/shaders/KaleidoShader";
+  </script>
+  <script id="164" type="text/x-typescript" pinned="">
+    import { RectAreaLightUniformsLib } from "npm:three@0.170.0/addons/lights/RectAreaLightUniformsLib"
+  </script>
+  <script id="157" type="text/x-typescript" pinned="">
+    import { RectAreaLightHelper } from "npm:three@0.170.0/addons/helpers/RectAreaLightHelper"
   </script>
   <script id="102" type="text/x-typescript" pinned="">
     import { WebGLPathTracer, GradientEquirectTexture } from "https://esm.sh/gh/gkjohnson/three-gpu-pathtracer";
@@ -809,7 +1074,14 @@
   <script id="82" type="text/x-typescript" pinned="">
     const PAGE_SECTIONS = {
       "top": "Config",
-      "scene-generation": "Scene generation",
+      "scene-generation": {
+        label: "Scene generation",
+        children: {
+          "scene-generation--shapes": "Shapes",
+          "scene-generation--mirrors": "Mirrors",
+          "scene-generation--lights": "Lights"
+        }
+      },
       "rendering-setup": {
         label: "Rendering setup",
         children: {
@@ -875,21 +1147,6 @@
         }
       );
     }
-  </script>
-  <script id="30" type="text/x-typescript" pinned="">
-    const refresh = input(Inputs.button("Generate", {value: null, reduce: () => Date.now()}));
-
-    display(html`<div class="refresh-button">${refresh.element}</div>`);
-  </script>
-  <script id="31" type="text/html" pinned="">
-    <style>
-      .refresh-button {
-        position: absolute; top: 3rem; left: ${width}px; transform: translateX(-50%)
-      }
-      .refresh-button form {
-        width: unset !important;
-      }
-    </style>
   </script>
   <script id="21" type="text/x-typescript" pinned="">
     // https://github.com/observablehq/notebook-kit/discussions/32
